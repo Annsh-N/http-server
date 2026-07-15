@@ -1,0 +1,32 @@
+# Build outputs
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.so
+
+# Local binaries from the legacy project
+myhttpd
+daytime-server
+use-dlopen
+
+# Runtime outputs
+log.txt
+*.log
+.local.git.out
+
+# Editor and OS files
+.DS_Store
+.vscode/
+*.swp
+*.swo
+
+# Untracked leftovers from the legacy course project
+legacy/icons/
+legacy/http-root-dir/cgi-bin/imagemap
+legacy/http-root-dir/cgi-bin/jj
+legacy/http-root-dir/cgi-bin/phf
+legacy/http-root-dir/cgi-bin/testscript
+legacy/http-root-dir/htdocs/icons/
