@@ -12,6 +12,7 @@ add_library(http_core
     src/response.cpp
     src/router.cpp
     src/static_file_handler.cpp
+    src/tcp_listener.cpp
 )
 
 target_include_directories(http_core
@@ -90,3 +91,14 @@ target_link_libraries(fd_tests
 )
 
 add_test(NAME fd_tests COMMAND fd_tests)
+
+add_executable(tcp_listener_tests
+    tests/tcp_listener_tests.cpp
+)
+
+target_link_libraries(tcp_listener_tests
+    PRIVATE
+        http_core
+)
+
+add_test(NAME tcp_listener_tests COMMAND tcp_listener_tests)
