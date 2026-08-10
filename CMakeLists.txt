@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(http_core
+    src/fd.cpp
     src/parser.cpp
     src/response.cpp
     src/router.cpp
@@ -78,3 +79,14 @@ target_link_libraries(static_file_handler_tests
 )
 
 add_test(NAME static_file_handler_tests COMMAND static_file_handler_tests)
+
+add_executable(fd_tests
+    tests/fd_tests.cpp
+)
+
+target_link_libraries(fd_tests
+    PRIVATE
+        http_core
+)
+
+add_test(NAME fd_tests COMMAND fd_tests)
