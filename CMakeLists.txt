@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(http_core
+    src/connection.cpp
     src/fd.cpp
     src/parser.cpp
     src/response.cpp
@@ -102,3 +103,14 @@ target_link_libraries(tcp_listener_tests
 )
 
 add_test(NAME tcp_listener_tests COMMAND tcp_listener_tests)
+
+add_executable(connection_tests
+    tests/connection_tests.cpp
+)
+
+target_link_libraries(connection_tests
+    PRIVATE
+        http_core
+)
+
+add_test(NAME connection_tests COMMAND connection_tests)
