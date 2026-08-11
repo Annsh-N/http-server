@@ -2,16 +2,20 @@
 
 #include "http/fd.hpp"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
 
 namespace {
+
+using namespace std::chrono_literals;
 
 int failures = 0;
 
@@ -83,6 +87,36 @@ std::string read_until_eof(int fd) {
         perror("read");
         std::exit(1);
     }
+}
+
+std::string read_until_contains(int fd, const std::string& expected) {
+    std::string out;
+    char buffer[1024];
+
+    while (out.find(expected) == std::string::npos) {
+        pollfd descriptor{fd, POLLIN, 0};
+        if (poll(&descriptor, 1, 2000) <= 0) {
+            return out;
+        }
+
+        const ssize_t n = read(fd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            return out;
+        }
+        out.append(buffer, static_cast<std::size_t>(n));
+    }
+
+    return out;
+}
+
+bool wait_for_peer_close(int fd, int timeout_ms = 2000) {
+    pollfd descriptor{fd, static_cast<short>(POLLIN | POLLHUP), 0};
+    if (poll(&descriptor, 1, timeout_ms) <= 0) {
+        return false;
+    }
+
+    char byte;
+    return read(fd, &byte, 1) == 0;
 }
 
 std::size_t count_occurrences(const std::string& input,
@@ -226,6 +260,74 @@ void test_close_token_stops_a_pipeline() {
            "server should not process requests after a close response");
 }
 
+void test_incomplete_request_hits_absolute_read_timeout() {
+    Fixture fixture;
+    SocketPair sockets = make_socket_pair();
+    const http::ConnectionTimeouts timeouts{150ms, 1s};
+
+    std::thread server([server_fd = std::move(sockets.server), &fixture,
+                        timeouts]() mutable {
+        http::Connection connection(std::move(server_fd), timeouts);
+        connection.serve(fixture.file_handler);
+    });
+
+    write_all_or_die(sockets.client.get(),
+                     "GET / HTTP/1.1\r\nHost: example.com\r\n");
+
+    expect(wait_for_peer_close(sockets.client.get()),
+           "incomplete request should close at read deadline");
+    server.join();
+}
+
+void test_request_fragments_do_not_extend_read_deadline() {
+    Fixture fixture;
+    SocketPair sockets = make_socket_pair();
+    const http::ConnectionTimeouts timeouts{400ms, 1s};
+
+    std::thread server([server_fd = std::move(sockets.server), &fixture,
+                        timeouts]() mutable {
+        http::Connection connection(std::move(server_fd), timeouts);
+        connection.serve(fixture.file_handler);
+    });
+
+    write_all_or_die(sockets.client.get(), "GET / HTTP/1.1\r\nHost:");
+    std::this_thread::sleep_for(200ms);
+    write_all_or_die(sockets.client.get(), " example.com");
+    std::this_thread::sleep_for(250ms);
+
+    expect(wait_for_peer_close(sockets.client.get(), 100),
+           "new fragments must not reset the absolute read deadline");
+    server.join();
+}
+
+void test_idle_keep_alive_connection_times_out() {
+    Fixture fixture;
+    SocketPair sockets = make_socket_pair();
+    const http::ConnectionTimeouts timeouts{1s, 150ms};
+
+    std::thread server([server_fd = std::move(sockets.server), &fixture,
+                        timeouts]() mutable {
+        http::Connection connection(std::move(server_fd), timeouts);
+        connection.serve(fixture.file_handler);
+    });
+
+    write_all_or_die(sockets.client.get(),
+                     "GET /hello.txt HTTP/1.1\r\n"
+                     "Host: example.com\r\n"
+                     "Connection: keep-alive\r\n"
+                     "\r\n");
+
+    const std::string response =
+        read_until_contains(sockets.client.get(), "\r\n\r\nhello\n");
+    expect(response.find("HTTP/1.1 200 OK\r\n") == 0,
+           "keep-alive request should receive its response");
+    expect(response.find("Connection: keep-alive\r\n") != std::string::npos,
+           "response should initially preserve keep-alive");
+    expect(wait_for_peer_close(sockets.client.get()),
+           "idle keep-alive connection should close at its deadline");
+    server.join();
+}
+
 } // namespace
 
 int main() {
@@ -235,6 +337,9 @@ int main() {
     test_parse_error_returns_bad_request();
     test_connection_tokens_are_matched_exactly();
     test_close_token_stops_a_pipeline();
+    test_incomplete_request_hits_absolute_read_timeout();
+    test_request_fragments_do_not_extend_read_deadline();
+    test_idle_keep_alive_connection_times_out();
 
     if (failures != 0) {
         std::cerr << failures << " connection test assertion(s) failed\n";

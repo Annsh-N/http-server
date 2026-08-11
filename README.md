@@ -17,3 +17,17 @@ The legacy course implementation remains in the repository for comparison while
 the production-oriented implementation is built under `src/`, `include/`, and
 `tests/`.
 
+## Run
+
+From the repository root:
+
+```sh
+cmake -S . -B build
+cmake --build build
+./build/http_server 8080 www 127.0.0.1 4 128
+```
+
+The arguments are optional and ordered as port, document root, IPv4 bind
+address, worker count, and dispatch-queue capacity. The acceptor blocks when
+the queue is full, bounding the number of accepted connections waiting for a
+worker.

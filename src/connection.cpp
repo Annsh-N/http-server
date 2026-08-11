@@ -5,6 +5,7 @@
 #include "http/router.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cctype>
 #include <string>
 #include <string_view>
@@ -99,9 +100,12 @@ ssize_t send_without_sigpipe(int fd, const char* data, std::size_t size) {
 
 namespace http {
 
-Connection::Connection(Fd fd) noexcept
+Connection::Connection(Fd fd, ConnectionTimeouts timeouts) noexcept
     : fd_(std::move(fd)),
-      state_(fd_.valid() ? State::Reading : State::Closed) {
+      state_(fd_.valid() ? State::Reading : State::Closed),
+      timeouts_(timeouts),
+      read_deadline_(std::chrono::steady_clock::now() +
+                     timeouts_.read_timeout) {
 #ifdef SO_NOSIGPIPE
     if (fd_.valid()) {
         const int enabled = 1;
@@ -130,10 +134,18 @@ void Connection::serve(const StaticFileHandler& file_handler) {
 }
 
 void Connection::read_from_socket() {
+    if (!arm_receive_timeout()) {
+        state_ = State::Closed;
+        return;
+    }
+
     char buffer[4096];
     const ssize_t n = read(fd_.get(), buffer, sizeof(buffer));
 
     if (n > 0) {
+        if (read_phase_ == ReadPhase::KeepAlive) {
+            begin_request_timeout();
+        }
         parser_.feed(std::string_view(buffer, static_cast<std::size_t>(n)));
         state_ = State::Parsing;
         return;
@@ -147,6 +159,10 @@ void Connection::read_from_socket() {
 }
 
 void Connection::parse_request(const StaticFileHandler& file_handler) {
+    if (read_phase_ == ReadPhase::KeepAlive && parser_.buffered_bytes() > 0) {
+        begin_request_timeout();
+    }
+
     ParseResult result = parser_.next();
 
     if (result.status == ParseStatus::NeedMoreData) {
@@ -176,7 +192,12 @@ void Connection::write_to_socket() {
         if (write_offset_ == pending_response_.size()) {
             pending_response_.clear();
             write_offset_ = 0;
-            state_ = close_after_write_ ? State::Closed : State::Parsing;
+            if (close_after_write_) {
+                state_ = State::Closed;
+            } else {
+                begin_keep_alive_timeout();
+                state_ = State::Parsing;
+            }
         }
         return;
     }
@@ -194,6 +215,41 @@ void Connection::queue_response(HttpResponse response, bool keep_alive) {
     write_offset_ = 0;
     close_after_write_ = !keep_alive;
     state_ = State::Writing;
+}
+
+void Connection::begin_request_timeout() {
+    read_phase_ = ReadPhase::Request;
+    read_deadline_ =
+        std::chrono::steady_clock::now() + timeouts_.read_timeout;
+}
+
+void Connection::begin_keep_alive_timeout() {
+    read_phase_ = ReadPhase::KeepAlive;
+    read_deadline_ =
+        std::chrono::steady_clock::now() + timeouts_.keep_alive_timeout;
+}
+
+bool Connection::arm_receive_timeout() {
+    using namespace std::chrono;
+
+    const auto remaining = read_deadline_ - steady_clock::now();
+    if (remaining <= steady_clock::duration::zero()) {
+        return false;
+    }
+
+    auto timeout = duration_cast<microseconds>(remaining);
+    if (timeout <= microseconds::zero()) {
+        timeout = microseconds(1);
+    }
+
+    timeval value{};
+    value.tv_sec = static_cast<decltype(value.tv_sec)>(
+        timeout.count() / microseconds::period::den);
+    value.tv_usec = static_cast<decltype(value.tv_usec)>(
+        timeout.count() % microseconds::period::den);
+
+    return setsockopt(fd_.get(), SOL_SOCKET, SO_RCVTIMEO, &value,
+                      sizeof(value)) == 0;
 }
 
 } // namespace http

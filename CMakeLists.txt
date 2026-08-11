@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(systems_http_server LANGUAGES CXX)
 
+find_package(Threads REQUIRED)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -12,8 +14,10 @@ add_library(http_core
     src/parser.cpp
     src/response.cpp
     src/router.cpp
+    src/server.cpp
     src/static_file_handler.cpp
     src/tcp_listener.cpp
+    src/worker_pool.cpp
 )
 
 target_include_directories(http_core
@@ -26,6 +30,11 @@ target_compile_options(http_core
         -Wall
         -Wextra
         -Wpedantic
+)
+
+target_link_libraries(http_core
+    PUBLIC
+        Threads::Threads
 )
 
 add_executable(http_server
@@ -111,6 +120,46 @@ add_executable(connection_tests
 target_link_libraries(connection_tests
     PRIVATE
         http_core
+        Threads::Threads
 )
 
 add_test(NAME connection_tests COMMAND connection_tests)
+
+add_executable(server_tests
+    tests/server_tests.cpp
+)
+
+target_link_libraries(server_tests
+    PRIVATE
+        http_core
+        Threads::Threads
+)
+
+add_test(NAME server_tests COMMAND server_tests)
+
+add_executable(bounded_queue_tests
+    tests/bounded_queue_tests.cpp
+)
+
+target_link_libraries(bounded_queue_tests
+    PRIVATE
+        Threads::Threads
+)
+
+target_include_directories(bounded_queue_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_test(NAME bounded_queue_tests COMMAND bounded_queue_tests)
+
+add_executable(worker_pool_tests
+    tests/worker_pool_tests.cpp
+)
+
+target_link_libraries(worker_pool_tests
+    PRIVATE
+        http_core
+)
+
+add_test(NAME worker_pool_tests COMMAND worker_pool_tests)
