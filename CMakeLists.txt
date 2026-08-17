@@ -4,6 +4,29 @@ project(systems_http_server LANGUAGES CXX)
 
 find_package(Threads REQUIRED)
 
+option(HTTP_ENABLE_ASAN_UBSAN "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(HTTP_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+
+if(HTTP_ENABLE_ASAN_UBSAN AND HTTP_ENABLE_TSAN)
+    message(FATAL_ERROR "ASan/UBSan and TSan must run in separate builds")
+endif()
+
+if(HTTP_ENABLE_ASAN_UBSAN OR HTTP_ENABLE_TSAN)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(FATAL_ERROR "Sanitizer builds require Clang or GCC")
+    endif()
+endif()
+
+if(HTTP_ENABLE_ASAN_UBSAN)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+endif()
+
+if(HTTP_ENABLE_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread -fno-omit-frame-pointer)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -175,3 +198,18 @@ target_link_libraries(metrics_tests
 )
 
 add_test(NAME metrics_tests COMMAND metrics_tests)
+
+set_tests_properties(
+    parser_tests
+    response_tests
+    router_tests
+    static_file_handler_tests
+    fd_tests
+    tcp_listener_tests
+    connection_tests
+    server_tests
+    bounded_queue_tests
+    worker_pool_tests
+    metrics_tests
+    PROPERTIES TIMEOUT 30
+)

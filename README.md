@@ -27,6 +27,12 @@ cmake --build build
 ./build/http_server 8080 www 127.0.0.1 4 128
 ```
 
+Run the test suite with:
+
+```sh
+ctest --test-dir build --output-on-failure
+```
+
 The arguments are optional and ordered as port, document root, IPv4 bind
 address, worker count, and dispatch-queue capacity. The acceptor blocks when
 the queue is full, bounding the number of accepted connections waiting for a
@@ -60,3 +66,9 @@ The reproducible `wrk` harness and workload controls are documented in
 [`benchmarks/README.md`](benchmarks/README.md). Benchmark results are meaningful
 only when accompanied by the commit, release configuration, machine details,
 load parameters, errors, and repeated p50/p95/p99 measurements.
+
+## Linux qualification
+
+Ubuntu CI builds Debug and Release configurations with GCC and Clang, then
+runs separate ASan/UBSan and TSan jobs. The gates and local reproduction script
+are documented in [`docs/linux-qualification.md`](docs/linux-qualification.md).
