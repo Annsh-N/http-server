@@ -558,3 +558,41 @@ and delivery to the client.
 
 The server still needs write deadlines so a slow or stuck client cannot hold a
 worker forever.
+
+## HTTP Correctness Checklist
+
+1. **Message framing:** TCP is only a byte stream. The parser must consume the
+   header terminator plus exactly the declared body bytes, leaving later bytes
+   for the next pipelined request.
+2. **Transfer-Encoding:** Chunked request bodies are outside the supported
+   subset. The server returns `501` and closes instead of guessing their end.
+3. **Transfer-Encoding with Content-Length:** Two competing body lengths are
+   ambiguous and can enable request smuggling. The server returns `400` and
+   closes.
+4. **Duplicate headers:** Raw fields are retained. Repeated `Connection` list
+   fields are combined; other duplicates, including `Host` and
+   `Content-Length`, are conservatively rejected.
+5. **HEAD:** A HEAD response advertises the same representation length as GET
+   but suppresses all body bytes.
+6. **Requests per connection:** Keep-alive connections have a fixed request
+   limit. The final allowed response carries `Connection: close` so one client
+   cannot own a worker indefinitely.
+7. **Write timeout:** Each response has one absolute write deadline. Partial
+   writes do not reset it, so a client that stops reading cannot retain a
+   worker forever.
+8. **Response size:** Static files have a configured maximum size and are read
+   with a bounded buffer. Oversized files are refused before serialization.
+9. **Completion reasons:** Every connection returns its end reason, request
+   count, and byte counts. Worker counters distinguish normal closes, parse
+   failures, request limits, timeouts, and socket errors.
+10. **Failure policy:** Malformed framing gets `400`; unsupported transfer
+    coding gets `501`; an active read deadline gets `408`; idle keep-alive,
+    peer close, and write failure close silently because another response is
+    unnecessary or cannot be delivered reliably.
+
+The governing invariant is:
+
+```text
+After one request, know exactly where the next request starts or close the
+connection.
+```

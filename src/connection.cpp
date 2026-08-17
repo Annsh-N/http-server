@@ -9,6 +9,7 @@
 #include <cctype>
 #include <string>
 #include <string_view>
+#include <stdexcept>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
@@ -88,6 +89,24 @@ http::HttpResponse bad_request_response() {
     return response;
 }
 
+http::HttpResponse not_implemented_response() {
+    http::HttpResponse response;
+    response.status_code = 501;
+    response.reason_phrase = "Not Implemented";
+    response.headers["Content-Type"] = "text/plain";
+    response.body = "transfer encoding is not supported\n";
+    return response;
+}
+
+http::HttpResponse request_timeout_response() {
+    http::HttpResponse response;
+    response.status_code = 408;
+    response.reason_phrase = "Request Timeout";
+    response.headers["Content-Type"] = "text/plain";
+    response.body = "request timeout\n";
+    return response;
+}
+
 ssize_t send_without_sigpipe(int fd, const char* data, std::size_t size) {
 #ifdef MSG_NOSIGNAL
     return send(fd, data, size, MSG_NOSIGNAL);
@@ -100,12 +119,26 @@ ssize_t send_without_sigpipe(int fd, const char* data, std::size_t size) {
 
 namespace http {
 
-Connection::Connection(Fd fd, ConnectionTimeouts timeouts) noexcept
+Connection::Connection(Fd fd, ConnectionConfig config)
     : fd_(std::move(fd)),
       state_(fd_.valid() ? State::Reading : State::Closed),
-      timeouts_(timeouts),
+      config_(config),
       read_deadline_(std::chrono::steady_clock::now() +
-                     timeouts_.read_timeout) {
+                     config_.timeouts.read_timeout),
+      write_deadline_(std::chrono::steady_clock::now()) {
+    if (config_.timeouts.read_timeout <= std::chrono::milliseconds::zero() ||
+        config_.timeouts.keep_alive_timeout <=
+            std::chrono::milliseconds::zero() ||
+        config_.timeouts.write_timeout <= std::chrono::milliseconds::zero() ||
+        config_.limits.max_requests == 0) {
+        throw std::invalid_argument(
+            "connection timeouts and request limit must be positive");
+    }
+
+    if (!fd_.valid()) {
+        result_.reason = ConnectionEndReason::ReadError;
+    }
+
 #ifdef SO_NOSIGPIPE
     if (fd_.valid()) {
         const int enabled = 1;
@@ -115,7 +148,10 @@ Connection::Connection(Fd fd, ConnectionTimeouts timeouts) noexcept
 #endif
 }
 
-void Connection::serve(const StaticFileHandler& file_handler) {
+Connection::Connection(Fd fd, ConnectionTimeouts timeouts)
+    : Connection(std::move(fd), ConnectionConfig{timeouts, {}}) {}
+
+ConnectionResult Connection::serve(const StaticFileHandler& file_handler) {
     while (state_ != State::Closed) {
         switch (state_) {
         case State::Reading:
@@ -131,11 +167,22 @@ void Connection::serve(const StaticFileHandler& file_handler) {
             break;
         }
     }
+
+    return result_;
 }
 
 void Connection::read_from_socket() {
-    if (!arm_receive_timeout()) {
-        state_ = State::Closed;
+    if (!arm_socket_timeout(SO_RCVTIMEO, read_deadline_)) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            finish(ConnectionEndReason::ReadError);
+            return;
+        }
+        if (read_phase_ == ReadPhase::KeepAlive) {
+            finish(ConnectionEndReason::KeepAliveTimeout);
+        } else {
+            queue_response(request_timeout_response(), false,
+                           ConnectionEndReason::ReadTimeout);
+        }
         return;
     }
 
@@ -143,6 +190,7 @@ void Connection::read_from_socket() {
     const ssize_t n = read(fd_.get(), buffer, sizeof(buffer));
 
     if (n > 0) {
+        result_.bytes_read += static_cast<std::size_t>(n);
         if (read_phase_ == ReadPhase::KeepAlive) {
             begin_request_timeout();
         }
@@ -151,11 +199,25 @@ void Connection::read_from_socket() {
         return;
     }
 
-    if (n < 0 && errno == EINTR) {
+    if (n < 0) {
+        if (errno == EINTR) {
+            return;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (read_phase_ == ReadPhase::KeepAlive) {
+                finish(ConnectionEndReason::KeepAliveTimeout);
+            } else {
+                queue_response(request_timeout_response(), false,
+                               ConnectionEndReason::ReadTimeout);
+            }
+            return;
+        }
+
+        finish(ConnectionEndReason::ReadError);
         return;
     }
 
-    state_ = State::Closed;
+    finish(ConnectionEndReason::PeerClosed);
 }
 
 void Connection::parse_request(const StaticFileHandler& file_handler) {
@@ -171,29 +233,49 @@ void Connection::parse_request(const StaticFileHandler& file_handler) {
     }
 
     if (result.status == ParseStatus::Error || !result.request.has_value()) {
-        queue_response(bad_request_response(), false);
+        HttpResponse response =
+            result.error_kind == ParseErrorKind::UnsupportedTransferEncoding
+                ? not_implemented_response()
+                : bad_request_response();
+        queue_response(std::move(response), false,
+                       ConnectionEndReason::ParseError);
         return;
     }
 
     const HttpRequest& request = *result.request;
-    const bool keep_alive = should_keep_alive(request);
+    ++result_.requests_served;
+    const bool request_limit_reached =
+        result_.requests_served >= config_.limits.max_requests;
+    const bool keep_alive =
+        should_keep_alive(request) && !request_limit_reached;
     HttpResponse response = route_request(request, file_handler);
     response.version = request.version;
-    queue_response(std::move(response), keep_alive);
+    queue_response(std::move(response), keep_alive,
+                   request_limit_reached
+                       ? ConnectionEndReason::RequestLimit
+                       : ConnectionEndReason::ConnectionClose);
 }
 
 void Connection::write_to_socket() {
+    if (!arm_socket_timeout(SO_SNDTIMEO, write_deadline_)) {
+        finish(errno == EAGAIN || errno == EWOULDBLOCK
+                   ? ConnectionEndReason::WriteTimeout
+                   : ConnectionEndReason::WriteError);
+        return;
+    }
+
     const char* data = pending_response_.data() + write_offset_;
     const std::size_t remaining = pending_response_.size() - write_offset_;
     const ssize_t n = send_without_sigpipe(fd_.get(), data, remaining);
 
     if (n > 0) {
         write_offset_ += static_cast<std::size_t>(n);
+        result_.bytes_written += static_cast<std::size_t>(n);
         if (write_offset_ == pending_response_.size()) {
             pending_response_.clear();
             write_offset_ = 0;
             if (close_after_write_) {
-                state_ = State::Closed;
+                finish(close_reason_after_write_);
             } else {
                 begin_keep_alive_timeout();
                 state_ = State::Parsing;
@@ -202,38 +284,51 @@ void Connection::write_to_socket() {
         return;
     }
 
-    if (n < 0 && errno == EINTR) {
-        return;
+    if (n < 0) {
+        if (errno == EINTR) {
+            return;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            finish(ConnectionEndReason::WriteTimeout);
+            return;
+        }
     }
 
-    state_ = State::Closed;
+    finish(ConnectionEndReason::WriteError);
 }
 
-void Connection::queue_response(HttpResponse response, bool keep_alive) {
+void Connection::queue_response(HttpResponse response, bool keep_alive,
+                                ConnectionEndReason close_reason) {
     response.headers["Connection"] = keep_alive ? "keep-alive" : "close";
     pending_response_ = serialize_response(response);
     write_offset_ = 0;
     close_after_write_ = !keep_alive;
+    close_reason_after_write_ = close_reason;
+    write_deadline_ = std::chrono::steady_clock::now() +
+                      config_.timeouts.write_timeout;
     state_ = State::Writing;
 }
 
 void Connection::begin_request_timeout() {
     read_phase_ = ReadPhase::Request;
     read_deadline_ =
-        std::chrono::steady_clock::now() + timeouts_.read_timeout;
+        std::chrono::steady_clock::now() + config_.timeouts.read_timeout;
 }
 
 void Connection::begin_keep_alive_timeout() {
     read_phase_ = ReadPhase::KeepAlive;
     read_deadline_ =
-        std::chrono::steady_clock::now() + timeouts_.keep_alive_timeout;
+        std::chrono::steady_clock::now() +
+        config_.timeouts.keep_alive_timeout;
 }
 
-bool Connection::arm_receive_timeout() {
+bool Connection::arm_socket_timeout(
+    int option, std::chrono::steady_clock::time_point deadline) {
     using namespace std::chrono;
 
-    const auto remaining = read_deadline_ - steady_clock::now();
+    const auto remaining = deadline - steady_clock::now();
     if (remaining <= steady_clock::duration::zero()) {
+        errno = EAGAIN;
         return false;
     }
 
@@ -248,8 +343,13 @@ bool Connection::arm_receive_timeout() {
     value.tv_usec = static_cast<decltype(value.tv_usec)>(
         timeout.count() % microseconds::period::den);
 
-    return setsockopt(fd_.get(), SOL_SOCKET, SO_RCVTIMEO, &value,
-                      sizeof(value)) == 0;
+    return setsockopt(fd_.get(), SOL_SOCKET, option, &value, sizeof(value)) ==
+           0;
+}
+
+void Connection::finish(ConnectionEndReason reason) {
+    result_.reason = reason;
+    state_ = State::Closed;
 }
 
 } // namespace http

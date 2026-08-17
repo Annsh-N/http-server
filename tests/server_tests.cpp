@@ -127,6 +127,12 @@ void test_real_tcp_request_reaches_static_file_handler() {
     expect(response.find("\r\n\r\n<h1>end to end</h1>\n") !=
                std::string::npos,
            "response should contain the file body");
+
+    const http::HttpServerStats stats = server.stats();
+    expect(stats.accepted_connections == 1,
+           "server stats should count accepted TCP connections");
+    expect(stats.workers.completed_connections == 1,
+           "server stats should expose completed worker connections");
 }
 
 void test_slow_client_does_not_block_another_worker() {

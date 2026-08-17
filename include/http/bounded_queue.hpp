@@ -33,6 +33,9 @@ public:
         }
 
         queue_.push_back(std::move(item));
+        if (queue_.size() > high_water_mark_) {
+            high_water_mark_ = queue_.size();
+        }
         lock.unlock();
         not_empty_.notify_one();
         return true;
@@ -76,12 +79,18 @@ public:
         return closed_;
     }
 
+    [[nodiscard]] std::size_t high_water_mark() const {
+        std::lock_guard lock(mutex_);
+        return high_water_mark_;
+    }
+
 private:
     const std::size_t capacity_;
     mutable std::mutex mutex_;
     std::condition_variable not_empty_;
     std::condition_variable not_full_;
     std::deque<T> queue_;
+    std::size_t high_water_mark_ = 0;
     bool closed_ = false;
 };
 

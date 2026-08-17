@@ -131,6 +131,18 @@ void test_shutdown_drains_dispatched_connection() {
            "shutdown should drain queued connections before joining");
     expect(response.find("\r\n\r\nworker response\n") != std::string::npos,
            "worker should run the complete connection pipeline");
+
+    const http::WorkerPoolStats stats = pool.stats();
+    expect(stats.dispatched_connections == 1,
+           "worker stats should count dispatched connections");
+    expect(stats.completed_connections == 1,
+           "worker stats should count completed connections");
+    expect(stats.requests_served == 1,
+           "worker stats should aggregate served requests");
+    expect(stats.explicit_closes == 1,
+           "worker stats should classify Connection close outcome");
+    expect(stats.bytes_read > 0 && stats.bytes_written > 0,
+           "worker stats should aggregate transferred bytes");
 }
 
 void test_dispatch_fails_after_shutdown() {
@@ -141,6 +153,8 @@ void test_dispatch_fails_after_shutdown() {
 
     expect(!pool.dispatch(std::move(sockets.server)),
            "closed pool should reject new connection ownership");
+    expect(pool.stats().rejected_dispatches == 1,
+           "worker stats should count rejected dispatches");
     char byte;
     expect(read(sockets.client.get(), &byte, 1) == 0,
            "rejected connection descriptor should be closed by RAII");

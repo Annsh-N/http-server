@@ -92,6 +92,19 @@ void test_head_root_routes_to_static_file_handler_without_body() {
                   "HEAD / should preserve file handler content type");
 }
 
+void test_head_error_preserves_error_length_without_body() {
+    Fixture fixture;
+    const auto response = http::route_request(
+        make_request("HEAD", "/missing.txt"), fixture.file_handler);
+
+    expect(response.status_code == 404,
+           "HEAD missing file should retain GET error status");
+    expect(response.content_length == std::string("not found\n").size(),
+           "HEAD error should advertise corresponding GET error length");
+    expect(response.suppress_body,
+           "HEAD error should suppress serialized response body");
+}
+
 void test_missing_file_routes_to_static_file_handler() {
     Fixture fixture;
 
@@ -146,6 +159,7 @@ void test_method_policy_is_case_sensitive() {
 int main() {
     test_get_root_routes_to_static_file_handler();
     test_head_root_routes_to_static_file_handler_without_body();
+    test_head_error_preserves_error_length_without_body();
     test_missing_file_routes_to_static_file_handler();
     test_post_returns_method_not_allowed();
     test_delete_returns_method_not_allowed();

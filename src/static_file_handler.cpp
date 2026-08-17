@@ -132,35 +132,55 @@ std::string content_type_for(const std::filesystem::path& path) {
     return "application/octet-stream";
 }
 
-std::optional<std::string> read_file(const std::filesystem::path& path) {
+std::optional<std::string> read_file(const std::filesystem::path& path,
+                                     std::size_t max_file_bytes) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         return std::nullopt;
     }
 
-    std::ostringstream body;
-    body << file.rdbuf();
-    if (!file.good() && !file.eof()) {
+    std::string body;
+    char buffer[8192];
+    while (file) {
+        file.read(buffer, sizeof(buffer));
+        const std::size_t count = static_cast<std::size_t>(file.gcount());
+        if (count > max_file_bytes - body.size()) {
+            return std::nullopt;
+        }
+        body.append(buffer, count);
+    }
+
+    if (!file.eof()) {
         return std::nullopt;
     }
 
-    return body.str();
+    return body;
 }
 
-http::HttpResponse serve_file(const std::filesystem::path& path, bool is_head) {
+http::HttpResponse serve_file(const std::filesystem::path& path, bool is_head,
+                              std::size_t max_file_bytes) {
     http::HttpResponse response;
     response.status_code = 200;
     response.reason_phrase = "OK";
     response.headers["Content-Type"] = content_type_for(path);
 
-    if (!is_head) {
-        auto body = read_file(path);
-        if (!body.has_value()) {
-            return forbidden();
-        }
-
-        response.body = std::move(*body);
+    std::error_code ec;
+    const std::uintmax_t file_size = std::filesystem::file_size(path, ec);
+    if (ec || file_size > max_file_bytes) {
+        return forbidden();
     }
+
+    if (is_head) {
+        response.content_length = static_cast<std::size_t>(file_size);
+        response.suppress_body = true;
+        return response;
+    }
+
+    auto body = read_file(path, max_file_bytes);
+    if (!body.has_value()) {
+        return forbidden();
+    }
+    response.body = std::move(*body);
 
     return response;
 }
@@ -169,8 +189,10 @@ http::HttpResponse serve_file(const std::filesystem::path& path, bool is_head) {
 
 namespace http {
 
-StaticFileHandler::StaticFileHandler(std::filesystem::path root)
-    : root_(std::filesystem::canonical(std::move(root))) {}
+StaticFileHandler::StaticFileHandler(std::filesystem::path root,
+                                     std::size_t max_file_bytes)
+    : root_(std::filesystem::canonical(std::move(root))),
+      max_file_bytes_(max_file_bytes) {}
 
 HttpResponse StaticFileHandler::handle(const HttpRequest& request) const {
     std::string path = extract_path(request.target);
@@ -210,7 +232,7 @@ HttpResponse StaticFileHandler::handle(const HttpRequest& request) const {
         return forbidden();
     }
 
-    return serve_file(candidate, request.method == "HEAD");
+    return serve_file(candidate, request.method == "HEAD", max_file_bytes_);
 }
 
 } // namespace http

@@ -31,3 +31,18 @@ The arguments are optional and ordered as port, document root, IPv4 bind
 address, worker count, and dispatch-queue capacity. The acceptor blocks when
 the queue is full, bounding the number of accepted connections waiting for a
 worker.
+
+## Supported HTTP subset
+
+- HTTP/1.0 and HTTP/1.1 origin-form requests;
+- `GET` and `HEAD` static-file responses;
+- `Content-Length` request framing with bounded bodies;
+- persistent connections and pipelined requests;
+- absolute request, keep-alive, and response-write deadlines;
+- a default limit of 100 requests per connection;
+- a default static-file limit of 16 MiB.
+
+Chunked request bodies are not implemented. Requests containing
+`Transfer-Encoding` are rejected and the connection is closed; requests that
+also contain `Content-Length` are treated as ambiguous framing and return
+`400 Bad Request`.

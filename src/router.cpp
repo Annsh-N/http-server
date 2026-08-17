@@ -19,7 +19,14 @@ namespace http {
 HttpResponse route_request(const HttpRequest& request,
                            const StaticFileHandler& file_handler) {
     if (request.method == "GET" || request.method == "HEAD") {
-        return file_handler.handle(request);
+        HttpResponse response = file_handler.handle(request);
+        if (request.method == "HEAD") {
+            if (!response.content_length.has_value()) {
+                response.content_length = response.body.size();
+            }
+            response.suppress_body = true;
+        }
+        return response;
     }
 
     return method_not_allowed();

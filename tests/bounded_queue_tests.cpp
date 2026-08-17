@@ -37,10 +37,14 @@ void test_fifo_order() {
     expect(queue.push(10), "first push should succeed");
     expect(queue.push(20), "second push should succeed");
     expect(queue.push(30), "third push should succeed");
+    expect(queue.high_water_mark() == 3,
+           "queue should retain its maximum observed occupancy");
 
     expect(queue.pop() == 10, "queue should pop the first item first");
     expect(queue.pop() == 20, "queue should preserve FIFO order");
     expect(queue.pop() == 30, "queue should pop the final item last");
+    expect(queue.high_water_mark() == 3,
+           "draining should not reduce queue high-water mark");
 }
 
 void test_full_queue_blocks_producer() {

@@ -61,6 +61,7 @@ Writing --socket error--> Closed
 
 Reading --request deadline--> Closed
 Reading --keep-alive deadline--> Closed
+Writing --write deadline--> Closed
 ```
 
 Returning from `Writing` to `Parsing` is important for HTTP pipelining: the
@@ -73,6 +74,25 @@ The request deadline is absolute: receiving another fragment does not extend
 it. This bounds clients that slowly drip an incomplete request. Once a response
 is fully written with keep-alive enabled, the connection switches to a separate
 idle deadline while waiting for the next request.
+
+Every response also has an absolute write deadline. Partial writes preserve an
+offset but do not extend that deadline. A configured request-count limit forces
+the final allowed response to advertise `Connection: close`.
+
+## HTTP framing policy
+
+The parser supports request bodies framed by one valid `Content-Length`.
+Repeated `Connection` fields are combined as a comma-separated list; all other
+duplicate fields are rejected by the current conservative header policy.
+
+`Transfer-Encoding` is outside the supported request subset. It receives `501`
+and closes the connection. A request containing both `Transfer-Encoding` and
+`Content-Length` receives `400` because its body boundary is ambiguous. The
+connection is never reused after either error.
+
+`HEAD` responses retain the corresponding file's representation length while
+suppressing body serialization. Static files above the configured response
+limit are refused before their contents are loaded into a response.
 
 ## Bounded dispatch queue
 
@@ -101,3 +121,7 @@ terminating the process or permanently reducing worker capacity.
 Shutdown closes the queue, drains descriptors accepted before closure, waits
 for active connections to finish, and joins every thread. The pool and server
 are non-movable because worker threads capture the pool's address.
+
+Workers aggregate connection results using relaxed atomic counters. Snapshots
+include accepted, dispatched, rejected, active, queued, completed, requests,
+bytes, queue high-water mark, and each normal or failure completion reason.

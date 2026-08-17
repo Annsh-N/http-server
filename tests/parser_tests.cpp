@@ -188,6 +188,83 @@ void test_duplicate_content_length_errors() {
            "duplicate Content-Length error should include diagnostic text");
 }
 
+void test_duplicate_host_errors() {
+    http::HttpParser parser;
+    parser.feed("GET / HTTP/1.1\r\n"
+                "Host: first.example\r\n"
+                "Host: second.example\r\n"
+                "\r\n");
+
+    const auto result = parser.next();
+    expect(result.status == http::ParseStatus::Error,
+           "duplicate Host should be rejected");
+}
+
+void test_unknown_duplicate_header_is_conservatively_rejected() {
+    http::HttpParser parser;
+    parser.feed("GET / HTTP/1.1\r\n"
+                "Host: example.com\r\n"
+                "X-Example: one\r\n"
+                "X-Example: two\r\n"
+                "\r\n");
+
+    const auto result = parser.next();
+    expect(result.status == http::ParseStatus::Error,
+           "unsupported duplicate-header semantics should be rejected");
+}
+
+void test_duplicate_connection_fields_are_combined() {
+    http::HttpParser parser;
+    parser.feed("GET / HTTP/1.1\r\n"
+                "Host: example.com\r\n"
+                "Connection: keep-alive\r\n"
+                "Connection: close\r\n"
+                "\r\n");
+
+    const auto result = parser.next();
+    expect(result.status == http::ParseStatus::RequestReady,
+           "duplicate Connection list fields should parse");
+    if (result.request.has_value()) {
+        expect(result.request->headers.at("connection") ==
+                   "keep-alive, close",
+               "Connection values should be combined in arrival order");
+        expect(result.request->header_fields.size() == 3,
+               "raw header fields should preserve repeated entries");
+    }
+}
+
+void test_transfer_encoding_and_content_length_errors() {
+    http::HttpParser parser;
+    parser.feed("POST / HTTP/1.1\r\n"
+                "Host: example.com\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "Content-Length: 5\r\n"
+                "\r\n"
+                "0\r\n\r\n");
+
+    const auto result = parser.next();
+    expect(result.status == http::ParseStatus::Error,
+           "ambiguous body framing should be rejected");
+    expect(result.error_kind == http::ParseErrorKind::BadRequest,
+           "ambiguous framing should be classified as bad request");
+}
+
+void test_unsupported_transfer_encoding_is_classified() {
+    http::HttpParser parser;
+    parser.feed("POST / HTTP/1.1\r\n"
+                "Host: example.com\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "\r\n"
+                "0\r\n\r\n");
+
+    const auto result = parser.next();
+    expect(result.status == http::ParseStatus::Error,
+           "unsupported transfer coding should be rejected");
+    expect(result.error_kind ==
+               http::ParseErrorKind::UnsupportedTransferEncoding,
+           "unsupported transfer coding should retain error classification");
+}
+
 void test_body_limit_errors() {
     http::HttpParser parser(16 * 1024, 4);
 
@@ -320,6 +397,11 @@ int main() {
     test_body_uses_exact_content_length();
     test_invalid_content_length_errors();
     test_duplicate_content_length_errors();
+    test_duplicate_host_errors();
+    test_unknown_duplicate_header_is_conservatively_rejected();
+    test_duplicate_connection_fields_are_combined();
+    test_transfer_encoding_and_content_length_errors();
+    test_unsupported_transfer_encoding_is_classified();
     test_body_limit_errors();
     test_http11_requires_host_header();
     test_http10_allows_missing_host_header();

@@ -40,9 +40,13 @@ std::string serialize_response(const HttpResponse& response) {
         out << name << ": " << value << "\r\n";
     }
 
-    out << "Content-Length: " << response.body.size() << "\r\n";
+    const std::size_t content_length =
+        response.content_length.value_or(response.body.size());
+    out << "Content-Length: " << content_length << "\r\n";
     out << "\r\n";
-    out << response.body;
+    if (!response.suppress_body) {
+        out << response.body;
+    }
 
     return out.str();
 }

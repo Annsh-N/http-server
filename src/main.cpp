@@ -63,7 +63,8 @@ int main(int argc, char* argv[]) {
         const std::size_t queue_capacity =
             argc >= 6 ? parse_positive_size(argv[5], "queue capacity") : 128;
 
-        http::HttpServer server(document_root, port, 128, bind_address, {},
+        http::HttpServer server(document_root, port, 128, bind_address,
+                                http::ConnectionConfig{},
                                 worker_count, queue_capacity);
         std::cout << "listening on http://" << bind_address << ':'
                   << server.port() << " serving "

@@ -89,6 +89,22 @@ void test_connection_keep_alive_header() {
                     "serializer should preserve keep-alive header");
 }
 
+void test_suppressed_body_preserves_representation_length() {
+    http::HttpResponse response;
+    response.content_length = 221;
+    response.suppress_body = true;
+    response.body = "this must not be transmitted";
+
+    const std::string serialized = http::serialize_response(response);
+    expect_contains(serialized, "Content-Length: 221\r\n",
+                    "HEAD response should advertise representation length");
+    expect(serialized.ends_with("\r\n\r\n"),
+           "suppressed response should end after headers");
+    expect(serialized.find("this must not be transmitted") ==
+               std::string::npos,
+           "suppressed response should omit body bytes");
+}
+
 } // namespace
 
 int main() {
@@ -97,6 +113,7 @@ int main() {
     test_empty_body_has_zero_content_length();
     test_explicit_content_length_is_overwritten();
     test_connection_keep_alive_header();
+    test_suppressed_body_preserves_representation_length();
 
     if (failures != 0) {
         std::cerr << failures << " response test assertion(s) failed\n";
@@ -106,4 +123,3 @@ int main() {
     std::cout << "response_tests passed\n";
     return 0;
 }
-

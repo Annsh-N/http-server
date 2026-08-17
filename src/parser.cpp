@@ -172,9 +172,11 @@ bool parse_content_length(std::string_view value, std::size_t& length,
     return true;
 }
 
-http::ParseResult parse_error(std::string error) {
+http::ParseResult parse_error(
+    std::string error,
+    http::ParseErrorKind kind = http::ParseErrorKind::BadRequest) {
     return http::ParseResult{http::ParseStatus::Error, std::nullopt,
-                             std::move(error)};
+                             std::move(error), kind};
 }
 
 } // namespace
@@ -238,13 +240,25 @@ ParseResult HttpParser::next() {
                 return parse_error(std::move(error));
             }
 
-            if (name == "content-length" &&
-                request.headers.find("content-length") !=
-                    request.headers.end()) {
-                return parse_error("duplicate Content-Length");
+            const auto existing = request.headers.find(name);
+            if (existing != request.headers.end()) {
+                if (name == "connection") {
+                    existing->second.append(", ");
+                    existing->second.append(value);
+                    request.header_fields.push_back(
+                        HeaderField{std::move(name), std::move(value)});
+                    if (line_end == std::string_view::npos) {
+                        break;
+                    }
+                    line_start = line_end + 2;
+                    continue;
+                }
+
+                return parse_error("duplicate header field: " + name);
             }
 
-            request.headers[std::move(name)] = std::move(value);
+            request.header_fields.push_back(HeaderField{name, value});
+            request.headers.emplace(std::move(name), std::move(value));
 
             if (line_end == std::string_view::npos) {
                 break;
@@ -260,10 +274,23 @@ ParseResult HttpParser::next() {
         }
     }
 
+    const auto transfer_encoding = request.headers.find("transfer-encoding");
+    const auto content_length_header = request.headers.find("content-length");
+    if (transfer_encoding != request.headers.end() &&
+        content_length_header != request.headers.end()) {
+        return parse_error(
+            "request contains both Transfer-Encoding and Content-Length");
+    }
+
+    if (transfer_encoding != request.headers.end()) {
+        return parse_error("Transfer-Encoding is not supported",
+                           ParseErrorKind::UnsupportedTransferEncoding);
+    }
+
     std::size_t content_length = 0;
-    if (const auto it = request.headers.find("content-length");
-        it != request.headers.end()) {
-        if (!parse_content_length(it->second, content_length, error)) {
+    if (content_length_header != request.headers.end()) {
+        if (!parse_content_length(content_length_header->second, content_length,
+                                  error)) {
             return parse_error(std::move(error));
         }
 

@@ -100,8 +100,22 @@ void test_head_existing_file_has_no_body() {
 
     expect(response.status_code == 200, "HEAD existing file should return 200");
     expect(response.body.empty(), "HEAD response should not include body");
+    expect(response.content_length == std::string("<h1>Hello</h1>\n").size(),
+           "HEAD should retain the corresponding GET representation length");
+    expect(response.suppress_body,
+           "HEAD response should explicitly suppress body serialization");
     expect_header(response, "Content-Type", "text/html",
                   "HEAD response should include content type");
+}
+
+void test_file_size_limit_rejects_large_representation() {
+    Fixture fixture;
+    http::StaticFileHandler limited_handler(fixture.root, 4);
+
+    const auto response =
+        limited_handler.handle(make_request("GET", "/hello.txt"));
+    expect(response.status_code == 403,
+           "file larger than configured response limit should be rejected");
 }
 
 void test_missing_file_returns_not_found() {
@@ -170,6 +184,7 @@ int main() {
     test_get_existing_file_returns_body();
     test_get_root_maps_to_index();
     test_head_existing_file_has_no_body();
+    test_file_size_limit_rejects_large_representation();
     test_missing_file_returns_not_found();
     test_plain_path_traversal_returns_forbidden();
     test_encoded_path_traversal_returns_forbidden();
@@ -184,4 +199,3 @@ int main() {
     std::cout << "static_file_handler_tests passed\n";
     return 0;
 }
-

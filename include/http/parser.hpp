@@ -15,10 +15,16 @@ enum class ParseStatus {
     Error,
 };
 
+enum class ParseErrorKind {
+    BadRequest,
+    UnsupportedTransferEncoding,
+};
+
 struct ParseResult {
     ParseStatus status;
     std::optional<HttpRequest> request;
     std::string error;
+    ParseErrorKind error_kind = ParseErrorKind::BadRequest;
 };
 
 class HttpParser {
@@ -37,4 +43,3 @@ private:
 };
 
 } // namespace http
-
