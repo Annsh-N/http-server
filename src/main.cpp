@@ -1,6 +1,8 @@
 #include "http/server.hpp"
+#include "http/metrics.hpp"
 
 #include <charconv>
+#include <chrono>
 #include <cerrno>
 #include <csignal>
 #include <cstdint>
@@ -102,8 +104,13 @@ int main(int argc, char* argv[]) {
                   << std::filesystem::canonical(document_root) << " with "
                   << worker_count << " workers and queue capacity "
                   << queue_capacity << '\n';
+        const auto started_at = std::chrono::steady_clock::now();
         server.serve_forever();
         shutdown_notification_fd = -1;
+        const auto uptime = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started_at);
+        std::cout << http::format_shutdown_metrics(server.stats(), uptime)
+                  << '\n';
     } catch (const std::exception& error) {
         std::cerr << "http_server: " << error.what() << '\n';
         return 1;

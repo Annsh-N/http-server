@@ -1,0 +1,13 @@
+done = function(summary, latency, requests)
+  io.write(string.format("requests=%d\n", summary.requests))
+  io.write(string.format("duration_us=%d\n", summary.duration))
+  io.write(string.format("bytes=%d\n", summary.bytes))
+  io.write(string.format("latency_p50_us=%.2f\n", latency:percentile(50.0)))
+  io.write(string.format("latency_p95_us=%.2f\n", latency:percentile(95.0)))
+  io.write(string.format("latency_p99_us=%.2f\n", latency:percentile(99.0)))
+  io.write(string.format("errors_connect=%d\n", summary.errors.connect))
+  io.write(string.format("errors_read=%d\n", summary.errors.read))
+  io.write(string.format("errors_write=%d\n", summary.errors.write))
+  io.write(string.format("errors_status=%d\n", summary.errors.status))
+  io.write(string.format("errors_timeout=%d\n", summary.errors.timeout))
+end

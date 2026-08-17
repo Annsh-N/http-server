@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(http_core
     src/connection.cpp
     src/fd.cpp
+    src/metrics.cpp
     src/parser.cpp
     src/response.cpp
     src/router.cpp
@@ -163,3 +164,14 @@ target_link_libraries(worker_pool_tests
 )
 
 add_test(NAME worker_pool_tests COMMAND worker_pool_tests)
+
+add_executable(metrics_tests
+    tests/metrics_tests.cpp
+)
+
+target_link_libraries(metrics_tests
+    PRIVATE
+        http_core
+)
+
+add_test(NAME metrics_tests COMMAND metrics_tests)

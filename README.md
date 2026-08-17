@@ -46,3 +46,17 @@ Chunked request bodies are not implemented. Requests containing
 `Transfer-Encoding` are rejected and the connection is closed; requests that
 also contain `Content-Length` are treated as ambiguous framing and return
 `400 Bad Request`.
+
+## Shutdown and metrics
+
+`SIGINT` and `SIGTERM` stop acceptance, close the dispatch queue, drain queued
+and active connections, and join the worker threads. The process prints one
+JSON shutdown record containing connection, request, byte, queue-pressure,
+timeout, protocol-error, and I/O-error counters.
+
+## Benchmarks
+
+The reproducible `wrk` harness and workload controls are documented in
+[`benchmarks/README.md`](benchmarks/README.md). Benchmark results are meaningful
+only when accompanied by the commit, release configuration, machine details,
+load parameters, errors, and repeated p50/p95/p99 measurements.
