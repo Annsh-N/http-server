@@ -66,12 +66,16 @@ bool WorkerPool::dispatch(Fd client) {
 }
 
 void WorkerPool::shutdown() {
-    queue_.close();
+    request_shutdown();
     for (std::thread& worker : workers_) {
         if (worker.joinable()) {
             worker.join();
         }
     }
+}
+
+void WorkerPool::request_shutdown() {
+    queue_.close();
 }
 
 std::size_t WorkerPool::worker_count() const noexcept {

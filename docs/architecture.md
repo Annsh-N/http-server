@@ -125,3 +125,16 @@ are non-movable because worker threads capture the pool's address.
 Workers aggregate connection results using relaxed atomic counters. Snapshots
 include accepted, dispatched, rejected, active, queued, completed, requests,
 bytes, queue high-water mark, and each normal or failure completion reason.
+
+## Graceful shutdown
+
+`SIGINT` and `SIGTERM` are converted into a byte written to a nonblocking
+self-pipe. `write` is async-signal-safe, so the signal handler does not enter
+C++ synchronization or lifetime-sensitive code. The accept loop polls both the
+listener and the pipe.
+
+When the pipe becomes readable, the server stops accepting, closes the bounded
+queue, and joins the workers. Closing the queue wakes a producer blocked by
+backpressure and prevents further dispatch. Connections already in the queue
+are drained, and active connections finish normally or reach their configured
+absolute deadline before process exit.

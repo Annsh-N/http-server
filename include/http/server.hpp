@@ -6,6 +6,7 @@
 #include "http/worker_pool.hpp"
 
 #include <atomic>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -36,18 +37,24 @@ public:
 
     HttpServer(HttpServer&&) = delete;
     HttpServer& operator=(HttpServer&&) = delete;
+    ~HttpServer();
 
     [[nodiscard]] std::uint16_t port() const noexcept;
     [[nodiscard]] HttpServerStats stats() const;
+    [[nodiscard]] int shutdown_notification_fd() const noexcept;
+    [[nodiscard]] bool shutdown_requested() const noexcept;
 
     void serve_one();
-    [[noreturn]] void serve_forever();
+    void serve_forever();
+    void request_shutdown();
 
 private:
     StaticFileHandler file_handler_;
     TcpListener listener_;
     WorkerPool worker_pool_;
+    std::array<Fd, 2> shutdown_pipe_;
     std::atomic<std::size_t> accepted_connections_{0};
+    std::atomic<bool> shutdown_requested_{false};
 };
 
 } // namespace http

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <string>
 #include <sys/socket.h>
@@ -162,11 +163,59 @@ void test_slow_client_does_not_block_another_worker() {
     slow_client.reset();
 }
 
+void test_shutdown_wakes_idle_accept_loop() {
+    Fixture fixture;
+    http::HttpServer server(fixture.root, 0);
+
+    auto stopped = std::async(std::launch::async,
+                              [&server] { server.serve_forever(); });
+    server.request_shutdown();
+
+    expect(stopped.wait_for(1s) == std::future_status::ready,
+           "shutdown should wake an idle accept loop");
+    stopped.get();
+    expect(server.shutdown_requested(),
+           "server should expose its terminal shutdown state");
+}
+
+void test_shutdown_drains_accepted_connection() {
+    Fixture fixture;
+    http::HttpServer server(fixture.root, 0, 128, "127.0.0.1",
+                            http::ConnectionConfig{}, 1, 1);
+    auto stopped = std::async(std::launch::async,
+                              [&server] { server.serve_forever(); });
+
+    http::Fd client = connect_to(server.port());
+    write_all_or_die(client.get(),
+                     "GET / HTTP/1.1\r\n"
+                     "Host: 127.0.0.1\r\n"
+                     "Connection: close\r\n\r\n");
+    shutdown(client.get(), SHUT_WR);
+
+    const auto accepted_deadline = std::chrono::steady_clock::now() + 1s;
+    while (server.stats().accepted_connections != 1 &&
+           std::chrono::steady_clock::now() < accepted_deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    server.request_shutdown();
+
+    const std::string response = read_until_eof(client.get());
+    expect(stopped.wait_for(1s) == std::future_status::ready,
+           "shutdown should finish after accepted work drains");
+    stopped.get();
+    expect(response.find("HTTP/1.1 200 OK\r\n") == 0,
+           "accepted request should complete during graceful shutdown");
+    expect(server.stats().workers.completed_connections == 1,
+           "drained connection should be reflected in final statistics");
+}
+
 } // namespace
 
 int main() {
     test_real_tcp_request_reaches_static_file_handler();
     test_slow_client_does_not_block_another_worker();
+    test_shutdown_wakes_idle_accept_loop();
+    test_shutdown_drains_accepted_connection();
 
     if (failures != 0) {
         std::cerr << failures << " server test assertion(s) failed\n";

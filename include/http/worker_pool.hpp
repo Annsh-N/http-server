@@ -50,6 +50,7 @@ public:
     WorkerPool& operator=(WorkerPool&&) = delete;
 
     bool dispatch(Fd client);
+    void request_shutdown();
     void shutdown();
 
     [[nodiscard]] std::size_t worker_count() const noexcept;

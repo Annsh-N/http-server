@@ -1,14 +1,44 @@
 #include "http/server.hpp"
 
 #include <charconv>
+#include <cerrno>
+#include <csignal>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 
 namespace {
+
+volatile std::sig_atomic_t shutdown_notification_fd = -1;
+
+extern "C" void handle_shutdown_signal(int) {
+    const int saved_errno = errno;
+    const int fd = shutdown_notification_fd;
+    if (fd >= 0) {
+        constexpr char notification = 1;
+        const ssize_t ignored = write(fd, &notification, sizeof(notification));
+        (void)ignored;
+    }
+    errno = saved_errno;
+}
+
+void install_shutdown_handler(int notification_fd) {
+    shutdown_notification_fd = notification_fd;
+    struct sigaction action {};
+    action.sa_handler = handle_shutdown_signal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+
+    if (sigaction(SIGINT, &action, nullptr) != 0 ||
+        sigaction(SIGTERM, &action, nullptr) != 0) {
+        shutdown_notification_fd = -1;
+        throw std::runtime_error("failed to install shutdown signal handlers");
+    }
+}
 
 std::uint16_t parse_port(std::string_view input) {
     unsigned int port = 0;
@@ -66,12 +96,14 @@ int main(int argc, char* argv[]) {
         http::HttpServer server(document_root, port, 128, bind_address,
                                 http::ConnectionConfig{},
                                 worker_count, queue_capacity);
+        install_shutdown_handler(server.shutdown_notification_fd());
         std::cout << "listening on http://" << bind_address << ':'
                   << server.port() << " serving "
                   << std::filesystem::canonical(document_root) << " with "
                   << worker_count << " workers and queue capacity "
                   << queue_capacity << '\n';
         server.serve_forever();
+        shutdown_notification_fd = -1;
     } catch (const std::exception& error) {
         std::cerr << "http_server: " << error.what() << '\n';
         return 1;
