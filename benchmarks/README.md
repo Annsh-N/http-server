@@ -4,6 +4,9 @@ Benchmarks use `wrk` against a release build on the loopback interface. The
 scripts preserve raw output and machine metadata; they do not turn a single run
 into a performance claim.
 
+The current measured baseline and its raw outputs are under
+[`results/2026-08-17-m2-pro`](results/2026-08-17-m2-pro).
+
 ## Run
 
 Build and start the server in separate terminals:

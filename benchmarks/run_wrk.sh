@@ -30,7 +30,7 @@ wrk -t"$threads" -c"$connections" -d"$warmup" "$url" >/dev/null
 
 {
     echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "system=$(uname -a)"
+    echo "system=$(uname -srm)"
     if command -v lscpu >/dev/null 2>&1; then
         echo "cpu=$(lscpu | awk -F: '/Model name/ {sub(/^[[:space:]]+/, "", $2); print $2; exit}')"
     elif command -v sysctl >/dev/null 2>&1; then
@@ -49,7 +49,7 @@ wrk -t"$threads" -c"$connections" -d"$warmup" "$url" >/dev/null
     echo "connections=$connections"
     echo "duration=$duration"
     echo "warmup=$warmup"
-    echo "command=wrk -t$threads -c$connections -d$duration --latency -s $script_dir/wrk_latency.lua $url"
+    echo "command=wrk -t$threads -c$connections -d$duration --latency -s benchmarks/wrk_latency.lua $url"
     wrk -t"$threads" -c"$connections" -d"$duration" --latency \
         -s "$script_dir/wrk_latency.lua" "$url"
 } | tee "$output"

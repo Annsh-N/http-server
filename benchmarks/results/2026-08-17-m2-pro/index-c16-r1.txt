@@ -1,0 +1,39 @@
+timestamp_utc=2026-08-17T07:18:04Z
+system=Darwin 25.5.0 arm64
+cpu=Apple M2 Pro
+wrk=wrk 4.2.0 [kqueue] Copyright (C) 2012 Will Glozer
+server_commit=a47b1cc
+server_build_type=Release
+server_workers=4
+server_queue_capacity=128
+compiler=Apple clang version 21.0.0 (clang-2100.1.1.101)
+url=http://127.0.0.1:18083/index.html
+threads=4
+connections=16
+duration=10s
+warmup=3s
+command=wrk -t4 -c16 -d10s --latency -s benchmarks/wrk_latency.lua http://127.0.0.1:18083/index.html
+Running 10s test @ http://127.0.0.1:18083/index.html
+  4 threads and 16 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    10.77ms   15.35ms  65.25ms   79.66%
+    Req/Sec     6.14k     1.06k    8.08k    62.75%
+  Latency Distribution
+     50%  186.00us
+     75%   20.83ms
+     90%   37.89ms
+     99%   48.15ms
+  245752 requests in 10.07s, 72.64MB read
+Requests/sec:  24392.47
+Transfer/sec:      7.21MB
+requests=245752
+duration_us=10074914
+bytes=76170835
+latency_p50_us=186.00
+latency_p95_us=43571.00
+latency_p99_us=48152.00
+errors_connect=0
+errors_read=0
+errors_write=0
+errors_status=0
+errors_timeout=0
